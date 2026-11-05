@@ -1,0 +1,39 @@
+name: Database health check
+
+# Every 30 minutes, asks Supabase for the main compliance row the same way the app does.
+# If the database does not answer correctly, this run turns red and GitHub emails you.
+# Also counts as regular activity, which helps keep a free Supabase project awake.
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ask the database for the main data row
+        env:
+          SUPABASE_URL: https://ephvaqjovusougleeasw.supabase.co
+          SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwaHZhcWpvdnVzb3VnbGVlYXN3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY5Njc0NDIsImV4cCI6MjEwMjU0MzQ0Mn0.5i34_Nv5q-EoBz9vK82TT-guLh56pZtKW5hxMXoANMw
+          RETRY_WAIT: "20"
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o body.json -w '%{http_code}' --max-time 20 \
+              "$SUPABASE_URL/rest/v1/kv_store?select=key&key=eq.mctrucks-compliance-data-v2" \
+              -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY" || true)
+            if [ "$code" = "200" ] && grep -q 'mctrucks-compliance-data-v2' body.json; then
+              echo "OK: database answered and the main data row is present."
+              exit 0
+            fi
+            echo "Attempt $i failed: HTTP $code"
+            cat body.json 2>/dev/null || true
+            echo
+            [ "$i" -lt 3 ] && sleep "$RETRY_WAIT"
+          done
+          echo "::error::Database health check FAILED. The compliance board cannot load its data. In Supabase: Project Settings > General > restart the project. The data itself is normally still safe."
+          exit 1
